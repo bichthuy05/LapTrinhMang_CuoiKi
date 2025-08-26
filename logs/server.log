@@ -1,0 +1,5 @@
+2025-08-23 10:36:13,070 - INFO - Server started on 127.0.0.1:5050
+2025-08-23 10:37:53,390 - INFO - New connection from ('127.0.0.1', 60474)
+2025-08-23 10:37:53,403 - INFO - Client thread started for ('127.0.0.1', 60474)
+2025-08-23 10:38:01,585 - INFO - New connection from ('127.0.0.1', 60476)
+2025-08-23 10:38:01,585 - INFO - Client thread started for ('127.0.0.1', 60476)
