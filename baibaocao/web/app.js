@@ -376,8 +376,9 @@ function clearChat() {
 
 // Friends management
 function renderFriends() {
-  elements.friendsList.innerHTML = '';
-
+  // Check if friends list actually changed to avoid unnecessary re-renders
+  const currentFriendsHtml = elements.friendsList.innerHTML;
+  
   // Filter out current user and duplicates
   const seen = new Set();
   const cleanFriends = (friends || []).filter(f => {
@@ -388,49 +389,46 @@ function renderFriends() {
     return true;
   });
   
-  if (cleanFriends.length === 0) {
-    elements.friendsList.innerHTML = '<li>Chưa có bạn bè</li>';
-    return;
-  }
+  const newFriendsHtml = cleanFriends.length === 0 
+    ? '<li>Chưa có bạn bè</li>'
+    : cleanFriends.map(friend => 
+        `<li onclick="selectFriendById(${friend.user_id})">${friend.username} (ID: ${friend.user_id})</li>`
+      ).join('');
   
-  cleanFriends.forEach(friend => {
-    const li = document.createElement('li');
-    li.textContent = `${friend.username} (ID: ${friend.user_id})`;
-    li.onclick = (ev) => selectFriend(friend, ev.currentTarget);
-    elements.friendsList.appendChild(li);
-  });
+  // Only update DOM if content actually changed
+  if (currentFriendsHtml !== newFriendsHtml) {
+    elements.friendsList.innerHTML = newFriendsHtml;
+  }
 }
 
 function renderFriendRequests() {
-  elements.friendRequestsList.innerHTML = '';
+  // Check if friend requests list actually changed to avoid unnecessary re-renders
+  const currentRequestsHtml = elements.friendRequestsList.innerHTML;
   
-  if (friendRequests.length === 0) {
-    elements.friendRequestsList.innerHTML = '<li>Không có lời mời nào</li>';
-    return;
+  const newRequestsHtml = friendRequests.length === 0 
+    ? '<li>Không có lời mời nào</li>'
+    : friendRequests.map(request => {
+        const rid = request.request_id || request.id;
+        return `
+          <li class="friend-request-item">
+            <div class="friend-request-info">Lời mời từ: ${request.from_username || `User ${request.from_user_id}`}</div>
+            <div class="friend-request-actions">
+              <button class="btn btn-success" onclick="acceptFriendRequest(${rid})">Chấp nhận</button>
+            </div>
+          </li>
+        `;
+      }).join('');
+  
+  // Only update DOM if content actually changed
+  if (currentRequestsHtml !== newRequestsHtml) {
+    elements.friendRequestsList.innerHTML = newRequestsHtml;
   }
-  
-  friendRequests.forEach(request => {
-    const li = document.createElement('li');
-    li.className = 'friend-request-item';
-    
-    const info = document.createElement('div');
-    info.className = 'friend-request-info';
-    info.textContent = `Lời mời từ: ${request.from_username || `User ${request.from_user_id}`}`;
-    
-    const actions = document.createElement('div');
-    actions.className = 'friend-request-actions';
-    
-    const acceptBtn = document.createElement('button');
-    acceptBtn.className = 'btn btn-success';
-    acceptBtn.textContent = 'Chấp nhận';
-    const rid = request.request_id || request.id;
-    acceptBtn.onclick = () => acceptFriendRequest(rid);
-    
-    actions.appendChild(acceptBtn);
-    li.appendChild(info);
-    li.appendChild(actions);
-    elements.friendRequestsList.appendChild(li);
-  });
+}
+
+function selectFriendById(userId) {
+  const friend = friends.find(f => f.user_id === userId);
+  if (!friend) return;
+  selectFriend(friend, null);
 }
 
 function selectFriend(friend, listItemEl) {
@@ -507,19 +505,25 @@ async function acceptFriendRequest(requestId) {
 
 // Groups management
 function renderGroups() {
-  elements.groupsList.innerHTML = '';
+  // Check if groups list actually changed to avoid unnecessary re-renders
+  const currentGroupsHtml = elements.groupsList.innerHTML;
   
-  if (groups.length === 0) {
-    elements.groupsList.innerHTML = '<li>Chưa có nhóm nào</li>';
-    return;
+  const newGroupsHtml = groups.length === 0 
+    ? '<li>Chưa có nhóm nào</li>'
+    : groups.map(group => 
+        `<li onclick="selectGroupById(${group.group_id})">${group.name} (${group.member_count} thành viên)</li>`
+      ).join('');
+  
+  // Only update DOM if content actually changed
+  if (currentGroupsHtml !== newGroupsHtml) {
+    elements.groupsList.innerHTML = newGroupsHtml;
   }
-  
-  groups.forEach(group => {
-    const li = document.createElement('li');
-    li.textContent = `${group.name} (${group.member_count} thành viên)`;
-    li.onclick = () => selectGroup(group);
-    elements.groupsList.appendChild(li);
-  });
+}
+
+function selectGroupById(groupId) {
+  const group = groups.find(g => g.group_id === groupId);
+  if (!group) return;
+  selectGroup(group);
 }
 
 function selectGroup(group) {
@@ -708,7 +712,14 @@ elements.sendBtn.onclick = async () => {
     elements.messageInput.value = '';
     replyToMessage = null; const rb = document.getElementById('replyBar'); if (rb) rb.remove();
   } catch (error) {
-    alert('Lỗi gửi tin nhắn: ' + error.message);
+    let errorMessage = 'Lỗi gửi tin nhắn: ' + error.message;
+    
+    // Check if it's a NOT_FRIENDS error from the API response
+    if (error.message && error.message.includes('NOT_FRIENDS')) {
+      errorMessage = 'Không thể gửi tin nhắn: Bạn chưa kết bạn với người này';
+    }
+    
+    alert(errorMessage);
   }
 };
 
@@ -746,14 +757,16 @@ elements.messageInput.onkeypress = (e) => {
 };
 
 // Poll for new messages with visibility-aware backoff
-let POLL_ACTIVE_MS = 1200; // focused
-let POLL_IDLE_MS = 3000;   // hidden
+let POLL_ACTIVE_MS = 2000; // focused - tăng lên để giảm lag
+let POLL_IDLE_MS = 4000;   // hidden - tăng lên để giảm lag
 
 async function pollMessages() {
   try {
     const response = await API.poll();
     if (response.messages && response.messages.length > 0) {
-      response.messages.forEach(msg => handleIncomingMessage(msg));
+      // Batch process messages to reduce DOM updates
+      const messagesToProcess = response.messages.slice(0, 10); // Limit to 10 messages per poll
+      messagesToProcess.forEach(msg => handleIncomingMessage(msg));
     }
   } catch (error) {
     // Silent

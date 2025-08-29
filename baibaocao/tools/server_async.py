@@ -202,6 +202,10 @@ async def route(session: dict, writer: asyncio.StreamWriter, msg: dict) -> None:
         if (to_uid, me) in STATE.blocked:
             await send(writer, {"type": "ERROR", "data": {"code": "BLOCKED_BY_PEER"}})
             return
+        # Check if they are friends
+        if to_uid not in STATE.friendships.get(me, set()) or me not in STATE.friendships.get(to_uid, set()):
+            await send(writer, {"type": "ERROR", "data": {"code": "NOT_FRIENDS"}})
+            return
         mid = STATE.next_msg_id
         STATE.next_msg_id += 1
         rec = {"id": mid, "from_user_id": me, "to_user_id": to_uid, "content": content,
