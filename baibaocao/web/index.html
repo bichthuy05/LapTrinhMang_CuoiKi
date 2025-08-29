@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chat App</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <!-- Login Screen -->
+    <div id="loginScreen" class="login-screen">
+      <div class="login-container">
+        <div class="login-header">
+          <h1>Chat App</h1>
+          <p>Đăng nhập để bắt đầu chat</p>
+        </div>
+        
+        <div class="login-form">
+          <div class="form-group">
+            <label for="username">Tên đăng nhập</label>
+            <input type="text" id="username" placeholder="Nhập username" />
+          </div>
+          
+          <div class="form-group">
+            <label for="password">Mật khẩu</label>
+            <div class="password-input-container">
+              <input type="password" id="password" placeholder="Nhập password" />
+              <button type="button" id="togglePassword" class="password-toggle" aria-label="Ẩn/hiện mật khẩu"></button>
+            </div>
+          </div>
+          
+          <div class="form-actions">
+            <button id="loginBtn" class="btn btn-primary">Đăng nhập</button>
+            <button id="registerBtn" class="btn btn-secondary">Đăng ký</button>
+          </div>
+          
+          <div id="loginStatus" class="login-status"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Chat Screen (hidden by default) -->
+    <div id="mainScreen" class="main-screen hidden">
+      <!-- Header -->
+      <header class="app-header">
+        <div class="header-left">
+          <div class="user-info">
+            <span id="currentUser">Chưa đăng nhập</span>
+          </div>
+        </div>
+        <div class="header-center">
+          <h2>Chat App</h2>
+        </div>
+        <div class="header-right">
+          <button id="themeBtn" class="btn btn-theme">🌙</button>
+          <button id="logoutBtn" class="btn btn-logout">Đăng xuất</button>
+        </div>
+      </header>
+
+      <!-- Main Content -->
+      <main class="app-main">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+          <!-- Friends Section -->
+          <section class="sidebar-section">
+            <h3>Bạn bè</h3>
+            <div class="add-friend">
+              <input type="text" id="friendUserId" placeholder="Nhập User ID" />
+              <button id="addFriendBtn" class="btn btn-small">Kết bạn</button>
+            </div>
+            
+            <!-- Friend Requests Section -->
+            <div class="friend-requests">
+              <h4>Lời mời kết bạn</h4>
+              <ul id="friendRequestsList"></ul>
+            </div>
+            
+            <div class="friends-list">
+              <h4>Danh sách bạn bè</h4>
+              <ul id="friendsList"></ul>
+            </div>
+          </section>
+
+          <!-- Groups Section -->
+          <section class="sidebar-section">
+            <h3>Nhóm chat</h3>
+            <div class="create-group">
+              <input type="text" id="groupName" placeholder="Tên nhóm" />
+              <button id="createGroupBtn" class="btn btn-small">Tạo nhóm</button>
+            </div>
+            
+            <!-- Add member to group -->
+            <div class="create-group">
+              <input type="text" id="addGroupId" placeholder="Nhập Group ID" />
+              <input type="text" id="addUserToGroupId" placeholder="Nhập User ID" />
+              <button id="addUserToGroupBtn" class="btn btn-small">Thêm</button>
+            </div>
+            
+            <div class="groups-list">
+              <h4>Nhóm của tôi</h4>
+              <ul id="groupsList"></ul>
+            </div>
+          </section>
+        </aside>
+
+        <!-- Chat Area -->
+        <section class="chat-area">
+          <!-- Tabs bar -->
+          <div id="tabsBar" class="tabs-bar"></div>
+
+          <div id="chatHeader" class="chat-header">
+            <h3>Chọn bạn bè hoặc nhóm để bắt đầu chat</h3>
+          </div>
+          
+          <div id="chatMessages" class="chat-messages"></div>
+          
+          <div id="chatInput" class="chat-input hidden">
+            <div class="input-container">
+              <input type="text" id="messageInput" placeholder="Nhập tin nhắn..." />
+              <button id="sendBtn" class="btn btn-send">Gửi</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
+
+

@@ -1,0 +1,6 @@
+# requirements.txt
+# Backend dependencies
+asyncio  # Built-in with Python 3.7+
+
+# Web UI dependencies  
+pywebview>=4.0  # For desktop app windows
