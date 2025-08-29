@@ -62,7 +62,12 @@ async def send(writer: asyncio.StreamWriter, obj: dict) -> None:
 async def broadcast_to_user(user_id: int, obj: dict) -> None:
     w = STATE.user_conns.get(user_id)
     if w is not None:
-        await send(w, obj)
+        try:
+            await send(w, obj)
+        except Exception as e:
+            print(f"Error broadcasting to user {user_id}: {e}")
+            # Remove dead connection
+            STATE.user_conns.pop(user_id, None)
 
 
 def find_msg(mid: int) -> dict | None:
@@ -143,6 +148,13 @@ async def route(session: dict, writer: asyncio.StreamWriter, msg: dict) -> None:
         payload = {"type": "FRIEND_ACCEPTED", "data": {"user_id1": a, "user_id2": b}}
         await send(writer, payload)
         await broadcast_to_user(a, payload)
+        
+        # Gửi thông báo cập nhật danh sách bạn bè cho cả 2 user
+        await asyncio.gather(
+            broadcast_to_user(a, {"type": "FRIEND_LIST_UPDATE", "data": {}}),
+            broadcast_to_user(b, {"type": "FRIEND_LIST_UPDATE", "data": {}}),
+            return_exceptions=True
+        )
         return
 
     if typ == "FRIEND_REMOVE":
@@ -158,6 +170,13 @@ async def route(session: dict, writer: asyncio.StreamWriter, msg: dict) -> None:
         payload = {"type": "FRIEND_REMOVED", "data": {"user_id": uid}}
         await send(writer, payload)
         await broadcast_to_user(uid, {"type": "FRIEND_REMOVED", "data": {"user_id": me}})
+        
+        # Gửi thông báo cập nhật danh sách bạn bè cho cả 2 user
+        await asyncio.gather(
+            broadcast_to_user(me, {"type": "FRIEND_LIST_UPDATE", "data": {}}),
+            broadcast_to_user(uid, {"type": "FRIEND_LIST_UPDATE", "data": {}}),
+            return_exceptions=True
+        )
         return
 
     if typ == "FRIEND_LIST":
@@ -257,10 +276,69 @@ async def route(session: dict, writer: asyncio.StreamWriter, msg: dict) -> None:
         if not info or info["owner_id"] != me or not isinstance(uid, int):
             await send(writer, {"type": "ERROR", "data": {"code": "BAD_GROUP_ADD"}})
             return
-        STATE.group_members.setdefault(gid, set()).add(uid)
+        
+        print(f"GROUP_ADD: User {me} adding user {uid} to group {gid}")
+        
+        # Kiểm tra user có tồn tại không
+        user_exists = any(rec["user_id"] == uid for rec in STATE.users.values())
+        if not user_exists:
+            await send(writer, {"type": "ERROR", "data": {"code": "USER_NOT_FOUND"}})
+            return
+        
+        # Gửi lời mời thay vì thêm trực tiếp
+        if uid != me:  # Không gửi cho chính mình
+            invitation_msg = {"type": "GROUP_INVITATION", "data": {
+                "group_id": gid, 
+                "group_name": info["name"], 
+                "from_user_id": me
+            }}
+            print(f"Sending invitation to user {uid}: {invitation_msg}")
+            await broadcast_to_user(uid, invitation_msg)
+        
+        # Thông báo cho người thêm thành viên
         mine = [{"group_id": k, "name": v["name"], "member_count": len(STATE.group_members.get(k, set()))}
                 for k, v in STATE.groups.items() if me in STATE.group_members.get(k, set())]
         await send(writer, {"type": "GROUP_LIST_RESULT", "data": {"groups": mine}})
+        
+        return
+
+    if typ == "GROUP_ACCEPT_INVITATION":
+        gid = data.get("group_id")
+        info = STATE.groups.get(gid)
+        if not info:
+            await send(writer, {"type": "ERROR", "data": {"code": "GROUP_NOT_FOUND"}})
+            return
+        print(f"GROUP_ACCEPT_INVITATION: User {me} accepting invitation to group {gid}")
+        STATE.group_members.setdefault(gid, set()).add(me)
+        group_info = {"group_id": gid, "name": info["name"], "member_count": len(STATE.group_members.get(gid, set()))}
+        await send(writer, {"type": "GROUP_ACCEPTED", "data": {"group": group_info}})
+        
+        # Gửi thông báo cập nhật danh sách nhóm cho tất cả thành viên trong nhóm
+        update_tasks = []
+        for member_id in STATE.group_members.get(gid, set()):
+            if member_id != me:  # Không gửi cho chính mình vì đã gửi GROUP_ACCEPTED rồi
+                update_tasks.append(broadcast_to_user(member_id, {"type": "GROUP_LIST_UPDATE", "data": {}}))
+        
+        # Gửi tất cả thông báo cập nhật cùng lúc
+        if update_tasks:
+            await asyncio.gather(*update_tasks, return_exceptions=True)
+        
+        # Gửi thông báo cập nhật cho chính mình ngay lập tức
+        await send(writer, {"type": "GROUP_LIST_UPDATE", "data": {}})
+        return
+
+    if typ == "GROUP_REJECT_INVITATION":
+        gid = data.get("group_id")
+        info = STATE.groups.get(gid)
+        if not info:
+            await send(writer, {"type": "ERROR", "data": {"code": "GROUP_NOT_FOUND"}})
+            return
+        await send(writer, {"type": "GROUP_REJECTED", "data": {"group_id": gid}})
+        
+        # Thông báo cho chủ nhóm biết lời mời bị từ chối
+        owner_id = info["owner_id"]
+        if owner_id != me:
+            await broadcast_to_user(owner_id, {"type": "GROUP_INVITATION_REJECTED", "data": {"group_id": gid, "user_id": me}})
         return
 
     if typ == "GROUP_LIST":

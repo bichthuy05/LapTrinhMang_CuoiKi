@@ -28,6 +28,7 @@ let currentChat = null;
 let friends = [];
 let groups = [];
 let friendRequests = []; // pending incoming requests only
+let groupInvitations = []; // pending group invitations
 
 // Track displayed messages to avoid duplicates per conversation key
 let displayedMessageIds = new Set();
@@ -78,6 +79,7 @@ const elements = {
   groupName: document.getElementById('groupName'),
   createGroupBtn: document.getElementById('createGroupBtn'),
   groupsList: document.getElementById('groupsList'),
+  groupInvitationsList: document.getElementById('groupInvitationsList'),
   
   // Chat
   chatHeader: document.getElementById('chatHeader'),
@@ -114,7 +116,8 @@ function renderTabs(){
   tabsBar.innerHTML = '';
   openTabs.forEach((t, idx) => {
     const tab = document.createElement('div');
-    tab.className = 'tab-item' + ((currentChat && tabKeyOfCurrent()===t.key) ? ' active' : '');
+    const currentTabKey = tabKeyOfCurrent();
+    tab.className = 'tab-item' + (currentTabKey === t.key ? ' active' : '');
     tab.onclick = (e)=>{ e.stopPropagation(); activateTab(t.key); };
     const title = document.createElement('div');
     title.className = 'tab-title';
@@ -425,6 +428,35 @@ function renderFriendRequests() {
   }
 }
 
+function renderGroupInvitations() {
+  // Check if group invitations list actually changed to avoid unnecessary re-renders
+  const currentInvitationsHtml = elements.groupInvitationsList.innerHTML;
+  
+  console.log('renderGroupInvitations called, groupInvitations:', groupInvitations);
+  
+  const newInvitationsHtml = groupInvitations.length === 0 
+    ? '<li>Không có lời mời nào</li>'
+    : groupInvitations.map(invitation => {
+        return `
+          <li class="group-invitation-item">
+            <div class="group-invitation-info">Lời mời vào nhóm: ${invitation.group_name || `Group ${invitation.group_id}`}</div>
+            <div class="group-invitation-actions">
+              <button class="btn btn-success" onclick="acceptGroupInvitation(${invitation.group_id})">Chấp nhận</button>
+              <button class="btn btn-danger" onclick="rejectGroupInvitation(${invitation.group_id})">Từ chối</button>
+            </div>
+          </li>
+        `;
+      }).join('');
+  
+  console.log('New HTML:', newInvitationsHtml);
+  
+  // Only update DOM if content actually changed
+  if (currentInvitationsHtml !== newInvitationsHtml) {
+    elements.groupInvitationsList.innerHTML = newInvitationsHtml;
+    console.log('Updated groupInvitationsList DOM');
+  }
+}
+
 function selectFriendById(userId) {
   const friend = friends.find(f => f.user_id === userId);
   if (!friend) return;
@@ -478,8 +510,9 @@ function selectFriend(friend, listItemEl) {
   resetConversationState();
   // Load chat history
   API.send({ type: 'MSG_HISTORY', data: { peer_id: friend.user_id, limit: 50 } });
-  // Ensure tab
+  // Ensure tab and update it
   ensureTabForConversation(currentChat);
+  renderTabs();
 }
 
 async function acceptFriendRequest(requestId) {
@@ -500,6 +533,38 @@ async function acceptFriendRequest(requestId) {
     // Fallback: vẫn yêu cầu server gửi lại danh sách để cập nhật trạng thái mới nhất
     API.send({ type: 'FRIEND_LIST', data: {} });
     alert('Kết nối tạm thời lỗi, đã yêu cầu cập nhật lại danh sách.');
+  }
+}
+
+async function acceptGroupInvitation(groupId) {
+  try {
+    const response = await API.send({ type: 'GROUP_ACCEPT_INVITATION', data: { group_id: groupId } });
+    if (response.type === 'GROUP_ACCEPTED') {
+      groupInvitations = groupInvitations.filter(inv => inv.group_id !== groupId);
+      renderGroupInvitations();
+      // Cập nhật ngay lập tức
+      API.send({ type: 'GROUP_LIST', data: {} });
+      alert('Đã tham gia nhóm thành công!');
+    } else if (response.type === 'ERROR') {
+      alert('Không thể tham gia nhóm: ' + (response.data?.code || 'UNKNOWN'));
+    }
+  } catch (e) {
+    alert('Lỗi tham gia nhóm: ' + e.message);
+  }
+}
+
+async function rejectGroupInvitation(groupId) {
+  try {
+    const response = await API.send({ type: 'GROUP_REJECT_INVITATION', data: { group_id: groupId } });
+    if (response.type === 'GROUP_REJECTED') {
+      groupInvitations = groupInvitations.filter(inv => inv.group_id !== groupId);
+      renderGroupInvitations();
+      alert('Đã từ chối lời mời vào nhóm');
+    } else if (response.type === 'ERROR') {
+      alert('Không thể từ chối: ' + (response.data?.code || 'UNKNOWN'));
+    }
+  } catch (e) {
+    alert('Lỗi từ chối lời mời: ' + e.message);
   }
 }
 
@@ -529,8 +594,44 @@ function selectGroupById(groupId) {
 function selectGroup(group) {
   currentChat = { type: 'group', data: group };
   
-  // Update UI
-  elements.chatHeader.innerHTML = `<h3>Nhóm: ${group.name}</h3>`;
+  // Update UI with add member functionality
+  elements.chatHeader.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <h3 style="margin:0;">Nhóm: ${group.name}</h3>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input type="text" id="addMemberInput" placeholder="User ID" style="width:80px;padding:4px 8px;font-size:12px;border:1px solid var(--border-color);border-radius:4px;">
+        <button id="addMemberBtn" class="btn btn-small" style="font-size:12px;padding:4px 8px;">Thêm</button>
+      </div>
+    </div>`;
+  
+  // Bind add member action
+  const addMemberBtn = document.getElementById('addMemberBtn');
+  const addMemberInput = document.getElementById('addMemberInput');
+  if (addMemberBtn && addMemberInput) {
+    addMemberBtn.onclick = async () => {
+      const userId = parseInt(addMemberInput.value.trim(), 10);
+      if (!Number.isInteger(userId)) {
+        alert('Nhập User ID hợp lệ');
+        return;
+      }
+             try {
+        const res = await API.send({ type: 'GROUP_ADD', data: { group_id: group.group_id, user_id: userId } });
+        if (res.type === 'GROUP_LIST_RESULT') {
+          alert('Đã gửi lời mời vào nhóm');
+          addMemberInput.value = '';
+        } else if (res.type === 'ERROR') {
+          let errorMsg = 'Lỗi gửi lời mời: ' + (res.data?.code || 'UNKNOWN');
+          if (res.data?.code === 'USER_NOT_FOUND') {
+            errorMsg = 'Không tìm thấy user với ID này';
+          }
+          alert(errorMsg);
+        }
+      } catch (e) {
+        alert('Lỗi: ' + e.message);
+      }
+    };
+  }
+  
   elements.chatInput.classList.remove('hidden');
   
   // Reset conversation state when switching rooms
@@ -545,8 +646,9 @@ function selectGroup(group) {
   // Update active state
   document.querySelectorAll('.groups-list li').forEach(li => li.classList.remove('active'));
   event?.target?.classList?.add('active');
-  // Ensure tab
+  // Ensure tab and update it
   ensureTabForConversation(currentChat);
+  renderTabs();
 }
 
 // Event handlers
@@ -600,6 +702,7 @@ elements.loginBtn.onclick = async () => {
         // Load initial data
         API.send({ type: 'FRIEND_LIST', data: {} });
         API.send({ type: 'GROUP_LIST', data: {} });
+        renderGroupInvitations();
       }, 1000);
       
     } else {
@@ -757,8 +860,8 @@ elements.messageInput.onkeypress = (e) => {
 };
 
 // Poll for new messages with visibility-aware backoff
-let POLL_ACTIVE_MS = 2000; // focused - tăng lên để giảm lag
-let POLL_IDLE_MS = 4000;   // hidden - tăng lên để giảm lag
+let POLL_ACTIVE_MS = 800;  // focused - giảm xuống để cập nhật nhanh hơn
+let POLL_IDLE_MS = 1500;   // hidden - giảm xuống để cập nhật nhanh hơn
 
 async function pollMessages() {
   try {
@@ -788,10 +891,158 @@ function handleIncomingMessage(msg) {
       renderFriends();
       friendRequests = data.pending_in || [];
       renderFriendRequests();
+      
+      // Cập nhật tab nếu đang chat với friend đã thay đổi
+      if (currentChat && currentChat.type === 'friend') {
+        const updatedFriend = friends.find(f => f.user_id === currentChat.data.user_id);
+        if (updatedFriend) {
+          currentChat.data = updatedFriend;
+          // Cập nhật header với thông tin mới
+          elements.chatHeader.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+              <h3 style="margin:0;">Chat với ${updatedFriend.username}</h3>
+              <button id="unfriendBtn" class="btn btn-danger btn-small">Hủy bạn</button>
+            </div>`;
+          
+          // Re-bind unfriend action
+          const unfriendBtn = document.getElementById('unfriendBtn');
+          if (unfriendBtn) {
+            unfriendBtn.onclick = async () => {
+              if (!confirm(`Bạn chắc chắn muốn hủy bạn với ${updatedFriend.username}?`)) return;
+              try {
+                const res = await API.send({ type: 'FRIEND_REMOVE', data: { user_id: updatedFriend.user_id } });
+                if (res.type === 'FRIEND_REMOVED') {
+                  // Refresh list and clear chat if current peer removed
+                  API.send({ type: 'FRIEND_LIST', data: {} });
+                  if (currentChat && currentChat.type === 'friend' && currentChat.data.user_id === updatedFriend.user_id) {
+                    currentChat = null;
+                    clearChat();
+                  }
+                  alert('Đã hủy kết bạn');
+                } else if (res.type === 'ERROR') {
+                  alert('Không thể hủy: ' + (res.data?.code || 'UNKNOWN'));
+                }
+              } catch (e) {
+                alert('Lỗi hủy bạn: ' + e.message);
+              }
+            };
+          }
+        }
+      }
+      
+      // Cập nhật tab
+      renderTabs();
       break;
     case 'GROUP_LIST_RESULT':
       groups = data.groups || [];
       renderGroups();
+      break;
+    case 'GROUP_INVITATION':
+      // Nhận lời mời vào nhóm
+      console.log('Received GROUP_INVITATION:', data);
+      if (data && !groupInvitations.find(inv => inv.group_id === data.group_id)) {
+        groupInvitations.push({
+          group_id: data.group_id,
+          group_name: data.group_name,
+          from_user_id: data.from_user_id
+        });
+        renderGroupInvitations();
+        console.log('Current groupInvitations:', groupInvitations);
+      }
+      break;
+    case 'GROUP_ACCEPTED':
+      // Đã tham gia nhóm thành công
+      if (data.group && !groups.find(g => g.group_id === data.group.group_id)) {
+        groups.push(data.group);
+        renderGroups();
+      }
+      // Cập nhật ngay lập tức thay vì chờ polling
+      API.send({ type: 'GROUP_LIST', data: {} });
+      break;
+    case 'GROUP_INVITATION':
+      // Nhận lời mời vào nhóm
+      console.log('Received GROUP_INVITATION:', data);
+      if (data && !groupInvitations.find(inv => inv.group_id === data.group_id)) {
+        groupInvitations.push({
+          group_id: data.group_id,
+          group_name: data.group_name,
+          from_user_id: data.from_user_id
+        });
+        renderGroupInvitations();
+        console.log('Current groupInvitations:', groupInvitations);
+      }
+      break;
+    case 'GROUP_LIST_RESULT':
+      // Cập nhật danh sách nhóm và cập nhật tab nếu cần
+      const oldGroups = [...groups];
+      groups = data.groups || [];
+      renderGroups();
+      
+      // Cập nhật tab nếu đang chat với group đã thay đổi
+      if (currentChat && currentChat.type === 'group') {
+        const updatedGroup = groups.find(g => g.group_id === currentChat.data.group_id);
+        if (updatedGroup) {
+          currentChat.data = updatedGroup;
+          // Cập nhật header với thông tin mới
+          elements.chatHeader.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+              <h3 style="margin:0;">Nhóm: ${updatedGroup.name}</h3>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <input type="text" id="addMemberInput" placeholder="User ID" style="width:80px;padding:4px 8px;font-size:12px;border:1px solid var(--border-color);border-radius:4px;">
+                <button id="addMemberBtn" class="btn btn-small" style="font-size:12px;padding:4px 8px;">Thêm</button>
+              </div>
+            </div>`;
+          
+          // Re-bind add member action
+          const addMemberBtn = document.getElementById('addMemberBtn');
+          const addMemberInput = document.getElementById('addMemberInput');
+          if (addMemberBtn && addMemberInput) {
+            addMemberBtn.onclick = async () => {
+              const userId = parseInt(addMemberInput.value.trim(), 10);
+              if (!Number.isInteger(userId)) {
+                alert('Nhập User ID hợp lệ');
+                return;
+              }
+              try {
+                const res = await API.send({ type: 'GROUP_ADD', data: { group_id: updatedGroup.group_id, user_id: userId } });
+                if (res.type === 'GROUP_LIST_RESULT') {
+                  alert('Đã gửi lời mời vào nhóm');
+                  addMemberInput.value = '';
+                } else if (res.type === 'ERROR') {
+                  let errorMsg = 'Lỗi gửi lời mời: ' + (res.data?.code || 'UNKNOWN');
+                  if (res.data?.code === 'USER_NOT_FOUND') {
+                    errorMsg = 'Không tìm thấy user với ID này';
+                  }
+                  alert(errorMsg);
+                }
+              } catch (e) {
+                alert('Lỗi: ' + e.message);
+              }
+            };
+          }
+        }
+      }
+      
+      // Cập nhật tab
+      renderTabs();
+      break;
+    case 'FRIEND_LIST_UPDATE':
+      // Cập nhật danh sách bạn bè ngay lập tức
+      API.send({ type: 'FRIEND_LIST', data: {} });
+      break;
+    case 'GROUP_LIST_UPDATE':
+      // Cập nhật danh sách nhóm ngay lập tức
+      API.send({ type: 'GROUP_LIST', data: {} });
+      break;
+    case 'GROUP_INVITATION_REJECTED':
+      // Thông báo lời mời vào nhóm bị từ chối
+      console.log('Group invitation rejected:', data);
+      break;
+    case 'FRIEND_REMOVED':
+      // Thông báo bị hủy kết bạn
+      console.log('Friend removed:', data);
+      // Cập nhật danh sách bạn bè
+      API.send({ type: 'FRIEND_LIST', data: {} });
       break;
     case 'FRIEND_REQUEST_INCOMING':
       if (data) {
@@ -905,10 +1156,11 @@ if (addUserToGroupBtn) {
     if (!Number.isInteger(gid) || !Number.isInteger(uid)) { alert('Nhập Group ID và User ID hợp lệ'); return; }
     try {
       const res = await API.send({ type: 'GROUP_ADD', data: { group_id: gid, user_id: uid } });
-      if (res.type === 'GROUP_MEMBER_ADDED' || res.type === 'OK' || res.ok) {
+      if (res.type === 'GROUP_LIST_RESULT') {
         alert('Đã thêm thành viên vào nhóm');
         addGroupIdEl.value = '';
         addUserToGroupIdEl.value = '';
+        // Refresh groups list
         API.send({ type: 'GROUP_LIST', data: {} });
       } else if (res.type === 'ERROR') {
         alert('Lỗi thêm thành viên: ' + (res.data?.code || 'UNKNOWN'));

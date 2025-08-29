@@ -157,6 +157,13 @@ body {
 .friend-request-actions { display: flex; gap: 8px; }
 .friend-request-actions .btn { flex: 1; padding: 6px 8px; font-size: 12px; }
 
+/* Group invitations styling */
+.group-invitations { margin-bottom: 16px; }
+.group-invitation-item { background-color: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 8px; }
+.group-invitation-info { font-size: 14px; color: var(--text-primary); }
+.group-invitation-actions { display: flex; gap: 8px; }
+.group-invitation-actions .btn { flex: 1; padding: 6px 8px; font-size: 12px; }
+
 /* Lists */
 .friends-list ul, .groups-list ul { list-style: none; }
 .friends-list li, .groups-list li { padding: 12px; margin-bottom: 8px; background-color: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; cursor: pointer; transition: all 0.2s ease; }
