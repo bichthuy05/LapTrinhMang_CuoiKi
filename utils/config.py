@@ -1,0 +1,8 @@
+
+SERVER_HOST = "127.0.0.1"
+SERVER_PORT = 5555
+
+CONNECT_TIMEOUT = 5  # giây
+HEARTBEAT_INTERVAL = 20  # giây
+HEARTBEAT_TIMEOUT = 45  # giây (nếu >45s không nhận PONG => reconnect)
+RECONNECT_MAX_BACKOFF = 15  # giây
