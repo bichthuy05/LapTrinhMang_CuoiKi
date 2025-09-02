@@ -98,6 +98,41 @@ body {
   border: 1px solid var(--border-color);
 }
 
+.status {
+  display: none;   /* ẩn mặc định */
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.status.show {
+  display: block;  /* chỉ hiện khi có class show */
+}
+
+
+.login-status {
+  display: none;  /* ẩn khi chưa có thông báo */
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  text-align: center; 
+}
+
+.login-status.show {
+  display: block;  /* chỉ hiện khi có class show */
+}
+
+#loginStatus {
+  display: none; /* ẩn mặc định */
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.9rem;
+}
+
+
 .login-header { text-align: center; margin-bottom: 28px; }
 .login-header h1 { font-size: 30px; font-weight: 800; color: var(--text-primary); margin-bottom: 8px; }
 .login-header p { color: var(--text-secondary); font-size: 15px; }
@@ -121,9 +156,6 @@ body {
 .form-actions { display: flex; gap: 12px; margin-top: 4px; }
 .form-actions .btn { flex: 1; padding: 12px; font-size: 16px; }
 
-.login-status { padding: 12px; border-radius: 10px; font-size: 14px; text-align: center; }
-.login-status.error { background-color: #fef2f2; color: var(--danger-color); border: 1px solid #fecaca; }
-.login-status.success { background-color: #f0fdf4; color: var(--success-color); border: 1px solid #bbf7d0; }
 
 /* Main Screen */
 .main-screen { min-height: 100vh; display: flex; flex-direction: column; }

@@ -180,10 +180,22 @@ function showScreen(screenName) {
   }
 }
 
-function showStatus(message, type = 'info') {
-  elements.loginStatus.textContent = message;
-  elements.loginStatus.className = `login-status ${type}`;
+function showStatus(message, isSuccess = true) {
+  const statusDiv = document.getElementById("loginStatus");
+  statusDiv.style.display = "block";      // hiện lên
+  statusDiv.innerHTML = message;
+
+  if (isSuccess) {
+    statusDiv.style.color = "#155724";
+    statusDiv.style.backgroundColor = "#d4edda";
+    statusDiv.style.border = "1px solid #c3e6cb";
+  } else {
+    statusDiv.style.color = "#721c24";
+    statusDiv.style.backgroundColor = "#f8d7da";
+    statusDiv.style.border = "1px solid #f5c6cb";
+  }
 }
+document.getElementById("loginStatus").style.display = "none";
 
 function formatTime(timestamp) {
   const date = new Date(timestamp * 1000);
@@ -706,10 +718,14 @@ elements.loginBtn.onclick = async () => {
       }, 1000);
       
     } else {
-      showStatus('Đăng nhập thất bại: ' + (response.data?.reason || 'Lỗi không xác định'), 'error');
-    }
+        showStatus(
+          'Đăng nhập thất bại: ' + response.message + 
+          '.Bạn có thể bấm nút <strong>Đăng ký</strong> để tạo tài khoản mới.',
+          false        
+        );
+      } 
   } catch (error) {
-    showStatus('Lỗi kết nối: ' + error.message, 'error');
+    showStatus('Lỗi kết nối: ' + error.message, false);
     console.error('Login error:', error);
   }
 };
