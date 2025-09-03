@@ -32,6 +32,11 @@ _group_members = {}     # group_id -> set(user_id)
 _next_gid = 1
 _grp_lock = threading.Lock()
 
+# group invites
+_group_invites = []     # list[{id, group_id, from_user_id, to_user_id, status}]
+_next_ginv_id = 1
+_ginv_lock = threading.Lock()
+
 
 def _hash(pw: str) -> str:
     return hashlib.sha256(pw.encode()).hexdigest()
@@ -65,9 +70,21 @@ def _find_msg(mid: int):
 def _reactions_summary(rec):
     return {k: len(v) for k, v in rec.get("reactions", {}).items()}
 
+def _user_exists(uid: int) -> bool:
+    for uname, rec in _users.items():
+        if rec.get("user_id") == uid:
+            return True
+    return False
+
+def _to_int(val):
+    try:
+        return int(val)
+    except Exception:
+        return val
+
 
 def _route(conn, session: dict, msg: dict):
-    global _next_uid, _next_msg_id, _next_req_id, _next_gid
+    global _next_uid, _next_msg_id, _next_req_id, _next_gid, _next_ginv_id
     typ = msg.get("type")
     data = msg.get("data") or {}
 
@@ -109,7 +126,7 @@ def _route(conn, session: dict, msg: dict):
 
     # ---- friends ----
     if typ == "FRIEND_REQUEST":
-        to_uid = data.get("to_user_id")
+        to_uid = _to_int(data.get("to_user_id"))
         if not isinstance(to_uid, int) or to_uid == me:
             _send(conn, {"type": "ERROR", "data": {"code": "BAD_FRIEND_REQUEST"}}); return
         with _req_lock:
@@ -134,6 +151,19 @@ def _route(conn, session: dict, msg: dict):
         payload = {"type": "FRIEND_ACCEPTED", "data": {"user_id1": a, "user_id2": b}}
         _send(conn, payload)
         _broadcast_to_user(a, payload)
+        # Push updated friend lists to both participants so UI can refresh without manual fetch
+        for u in (a, b):
+            friends = [{"user_id": uid, "username": _username_of(uid), "status": "accepted"}
+                       for uid in sorted(_friendships.get(u, set()))]
+            with _req_lock:
+                pending_in = [{"request_id": r["id"], "from_user_id": r["from_user_id"],
+                               "from_username": _username_of(r["from_user_id"])}
+                              for r in _friend_requests if r["to_user_id"] == u and r["status"] == "pending"]
+                pending_out = [{"request_id": r["id"], "to_user_id": r["to_user_id"],
+                                "to_username": _username_of(r["to_user_id"])}
+                               for r in _friend_requests if r["from_user_id"] == u and r["status"] == "pending"]
+            _broadcast_to_user(u, {"type": "FRIEND_LIST_RESULT",
+                                   "data": {"friends": friends, "pending_in": pending_in, "pending_out": pending_out}})
         return
 
     if typ == "FRIEND_LIST":
@@ -224,15 +254,175 @@ def _route(conn, session: dict, msg: dict):
         return
 
     if typ == "GROUP_ADD":
+        # Interpret GROUP_ADD as sending an invitation instead of immediate join
         gid = data.get("group_id"); uid = data.get("user_id")
         info = _groups.get(gid)
         if not info or info["owner_id"] != me or not isinstance(uid, int):
+            print(f"[GROUP_ADD] BAD_GROUP_ADD by {me}: gid={gid}, uid={uid}, info_ok={bool(info)} owner_ok={info and info['owner_id']==me}")
             _send(conn, {"type": "ERROR", "data": {"code": "BAD_GROUP_ADD"}}); return
+        if not _user_exists(uid):
+            _send(conn, {"type": "ERROR", "data": {"code": "USER_NOT_FOUND"}}); return
+        if uid in _group_members.get(gid, set()):
+            _send(conn, {"type": "ERROR", "data": {"code": "ALREADY_MEMBER"}}); return
+        with _ginv_lock:
+            existing = next((r for r in _group_invites if r["group_id"] == gid and r["to_user_id"] == uid and r["status"] == "pending"), None)
+            if existing:
+                inv_id = existing["id"]
+                print(f"[GROUP_INVITE] reuse pending invite_id={inv_id} gid={gid} from={me} to={uid}")
+            else:
+                inv_id = _next_ginv_id
+                _next_ginv_id += 1
+                _group_invites.append({
+                    "id": inv_id,
+                    "group_id": gid,
+                    "from_user_id": me,
+                    "to_user_id": uid,
+                    "status": "pending"
+                })
+                print(f"[GROUP_INVITE] created invite_id={inv_id} gid={gid} from={me} to={uid}")
+        # notify owner (sender) event (no auto list refresh here)
+        payload_sender = {"type": "GROUP_INVITE_SENT",
+                          "data": {"invite_id": inv_id, "group_id": gid, "to_user_id": uid}}
+        _send(conn, payload_sender)
+        print(f"[GROUP_INVITE] sent to sender {me}: {payload_sender}")
+        # notify invitee (new + legacy)
+        payload_invitee = {"type": "GROUP_INVITE_INCOMING",
+                           "data": {"invite_id": inv_id, "group_id": gid,
+                                     "group_name": info["name"],
+                                     "from_user_id": me, "from_username": _username_of(me)}}
+        _broadcast_to_user(uid, payload_invitee)
+        legacy_inv = {"type": "GROUP_INVITATION",
+                      "data": {"group_id": gid, "group_name": info["name"], "from_user_id": me}}
+        _broadcast_to_user(uid, legacy_inv)
+        print(f"[GROUP_INVITE] incoming pushed to {uid}: {payload_invitee} and legacy {legacy_inv}")
+        return
+
+    if typ == "GROUP_INVITE_LIST":
+        # Return pending invites for current user
+        with _ginv_lock:
+            incoming = [{"invite_id": r["id"], "group_id": r["group_id"], "from_user_id": r["from_user_id"],
+                         "from_username": _username_of(r["from_user_id"]),
+                         "group_name": _groups.get(r["group_id"], {}).get("name")}
+                        for r in _group_invites if r["to_user_id"] == me and r["status"] == "pending"]
+            outgoing = [{"invite_id": r["id"], "group_id": r["group_id"], "to_user_id": r["to_user_id"],
+                         "to_username": _username_of(r["to_user_id"]),
+                         "group_name": _groups.get(r["group_id"], {}).get("name")}
+                        for r in _group_invites if r["from_user_id"] == me and r["status"] == "pending"]
+        _send(conn, {"type": "GROUP_INVITE_LIST_RESULT", "data": {"incoming": incoming, "outgoing": outgoing}})
+        return
+
+    if typ == "GROUP_INVITE_ACCEPT":
+        inv_id = data.get("invite_id"); gid = data.get("group_id"); gname = data.get("group_name")
+        created_from_fallback = False
+        # Resolve by invite_id, group_id or group_name; if nothing given and only one pending -> pick it
+        with _ginv_lock:
+            # Try by invite_id/group_id first
+            inv = next((r for r in _group_invites if r["status"] == "pending" and r["to_user_id"] == me and
+                        ((inv_id and r["id"] == inv_id) or (not inv_id and gid and r["group_id"] == gid))), None)
+            # Try by group_name
+            if not inv and gname:
+                inv = next((r for r in _group_invites if r["status"] == "pending" and r["to_user_id"] == me and
+                            _groups.get(r["group_id"], {}).get("name") == gname), None)
+            # If still not found and no identifiers -> pick single pending if unique
+            if not inv and not inv_id and not gid and not gname:
+                pending = [r for r in _group_invites if r["status"] == "pending" and r["to_user_id"] == me]
+                inv = pending[0] if len(pending) == 1 else None
+            # If we have a valid group_id but no pending invite -> accept anyway (fallback)
+            if not inv and (gid or gname):
+                if not gid and gname:
+                    # resolve gid from group name (best effort)
+                    for _gid, g in _groups.items():
+                        if g.get("name") == gname:
+                            gid = _gid; break
+                if gid in _groups:
+                    created_from_fallback = True
+                    inv = {"id": 0, "group_id": gid, "from_user_id": _groups.get(gid, {}).get("owner_id", 0)}
+            elif inv:
+                inv["status"] = "accepted"
+            else:
+                _send(conn, {"type": "ERROR", "data": {"code": "BAD_GROUP_INVITE_ACCEPT"}}); return
+        gid = inv["group_id"]
+        if gid not in _groups:
+            _send(conn, {"type": "ERROR", "data": {"code": "BAD_GROUP"}}); return
         with _grp_lock:
-            _group_members.setdefault(gid, set()).add(uid)
-        mine = [{"group_id": k, "name": v["name"], "member_count": len(_group_members.get(k, set()))}
-                for k, v in _groups.items() if me in _group_members.get(k, set())]
-        _send(conn, {"type": "GROUP_LIST_RESULT", "data": {"groups": mine}})
+            _group_members.setdefault(gid, set()).add(me)
+            members = list(_group_members.get(gid, set()))
+        # notify both sides (new event)
+        payload = {"type": "GROUP_INVITE_ACCEPTED", "data": {"invite_id": inv.get("id", 0), "group_id": gid, "user_id": me, "fallback": created_from_fallback}}
+        _send(conn, payload)
+        if inv.get("from_user_id"):
+            _broadcast_to_user(inv["from_user_id"], payload)
+        # legacy convenience: push updated group lists to all members so member_count syncs
+        for uid2 in members:
+            mine = [{"group_id": k, "name": v["name"], "member_count": len(_group_members.get(k, set()))}
+                    for k, v in _groups.items() if uid2 in _group_members.get(k, set())]
+            _broadcast_to_user(uid2, {"type": "GROUP_LIST_RESULT", "data": {"groups": mine}})
+        return
+
+    if typ == "GROUP_INVITE_DECLINE":
+        inv_id = data.get("invite_id"); gid = data.get("group_id"); gname = data.get("group_name")
+        with _ginv_lock:
+            # resolve invite by id or group_id
+            inv = next((r for r in _group_invites if r["status"] == "pending" and r["to_user_id"] == me and
+                        ((inv_id and r["id"] == inv_id) or (not inv_id and gid and r["group_id"] == gid))), None)
+            # try by group_name
+            if not inv and gname:
+                inv = next((r for r in _group_invites if r["status"] == "pending" and r["to_user_id"] == me and
+                            _groups.get(r["group_id"], {}).get("name") == gname), None)
+            # if no identifiers and exactly one pending -> choose it
+            if not inv and not inv_id and not gid and not gname:
+                pending = [r for r in _group_invites if r["status"] == "pending" and r["to_user_id"] == me]
+                inv = pending[0] if len(pending) == 1 else None
+            if not inv and (gid or gname):
+                # Fallback: no pending but have group identifier -> treat as declined (no-op)
+                if not gid and gname:
+                    for _gid, g in _groups.items():
+                        if g.get("name") == gname:
+                            gid = _gid; break
+                payload = {"type": "GROUP_INVITE_DECLINED", "data": {"invite_id": 0, "group_id": gid or 0, "user_id": me, "fallback": True}}
+                _send(conn, payload)
+                owner = _groups.get(gid, {}).get("owner_id") if gid else None
+                if owner:
+                    _broadcast_to_user(owner, payload)
+                return
+            if not inv:
+                _send(conn, {"type": "ERROR", "data": {"code": "BAD_GROUP_INVITE_DECLINE"}}); return
+            inv["status"] = "declined"
+        payload = {"type": "GROUP_INVITE_DECLINED", "data": {"invite_id": inv["id"], "group_id": inv["group_id"], "user_id": me}}
+        _send(conn, payload)
+        _broadcast_to_user(inv["from_user_id"], payload)
+        return
+
+    # ----- Legacy compatibility for older web UI -----
+    if typ == "GROUP_ACCEPT_INVITATION":
+        gid = data.get("group_id")
+        with _ginv_lock:
+            inv = next((r for r in _group_invites if r["group_id"] == gid and r["to_user_id"] == me and r["status"] == "pending"), None)
+            if not inv:
+                _send(conn, {"type": "ERROR", "data": {"code": "BAD_GROUP_INVITE_ACCEPT"}}); return
+            inv["status"] = "accepted"
+        with _grp_lock:
+            _group_members.setdefault(gid, set()).add(me)
+            members = list(_group_members.get(gid, set()))
+        payload = {"type": "GROUP_INVITE_ACCEPTED", "data": {"invite_id": inv["id"], "group_id": gid, "user_id": me}}
+        _send(conn, payload)
+        _broadcast_to_user(inv["from_user_id"], payload)
+        for uid2 in members:
+            mine = [{"group_id": k, "name": v["name"], "member_count": len(_group_members.get(k, set()))}
+                    for k, v in _groups.items() if uid2 in _group_members.get(k, set())]
+            _broadcast_to_user(uid2, {"type": "GROUP_LIST_RESULT", "data": {"groups": mine}})
+        return
+
+    if typ == "GROUP_REJECT_INVITATION":
+        gid = data.get("group_id")
+        with _ginv_lock:
+            inv = next((r for r in _group_invites if r["group_id"] == gid and r["to_user_id"] == me and r["status"] == "pending"), None)
+            if not inv:
+                _send(conn, {"type": "ERROR", "data": {"code": "BAD_GROUP_INVITE_DECLINE"}}); return
+            inv["status"] = "declined"
+        payload = {"type": "GROUP_INVITE_DECLINED", "data": {"invite_id": inv["id"], "group_id": gid, "user_id": me}}
+        _send(conn, payload)
+        _broadcast_to_user(inv["from_user_id"], payload)
         return
 
     if typ == "GROUP_LIST":

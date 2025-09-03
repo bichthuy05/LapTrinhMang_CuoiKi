@@ -69,6 +69,13 @@ def main():
     grp = GroupManager(sock, on_event=on_group_event)
     handler.register("GROUP_CREATED", grp.on_created)
     handler.register("GROUP_LIST_RESULT", grp.on_list_result)
+    # Invite-related events
+    handler.register("GROUP_INVITE_SENT", grp.on_invite_sent)
+    handler.register("GROUP_INVITE_INCOMING", grp.on_invite_incoming)
+    handler.register("GROUP_INVITE_LIST_RESULT", grp.on_invite_list_result)
+    handler.register("GROUP_INVITE_ACCEPTED", grp.on_invite_accepted)
+    handler.register("GROUP_INVITE_DECLINED", grp.on_invite_declined)
+    # Messages
     handler.register("GROUP_MSG_RECV", lambda m: (notif.on_incoming_msg(m.get("data", {})),
                                                   logging.info("[GROUP_MSG] %s", m.get("data"))))
     handler.register("GROUP_HISTORY_RESULT", lambda m: logging.info("[GROUP_HISTORY] %s", m.get("data")))

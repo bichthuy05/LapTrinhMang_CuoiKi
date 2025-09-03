@@ -441,31 +441,25 @@ function renderFriendRequests() {
 }
 
 function renderGroupInvitations() {
-  // Check if group invitations list actually changed to avoid unnecessary re-renders
   const currentInvitationsHtml = elements.groupInvitationsList.innerHTML;
-  
-  console.log('renderGroupInvitations called, groupInvitations:', groupInvitations);
-  
   const newInvitationsHtml = groupInvitations.length === 0 
     ? '<li>Không có lời mời nào</li>'
     : groupInvitations.map(invitation => {
+        const gid = invitation.group_id;
+        const iid = invitation.invite_id;
+        const gname = invitation.group_name || `Group ${gid}`;
         return `
           <li class="group-invitation-item">
-            <div class="group-invitation-info">Lời mời vào nhóm: ${invitation.group_name || `Group ${invitation.group_id}`}</div>
+            <div class="group-invitation-info">Lời mời vào nhóm: ${gname}</div>
             <div class="group-invitation-actions">
-              <button class="btn btn-success" onclick="acceptGroupInvitation(${invitation.group_id})">Chấp nhận</button>
-              <button class="btn btn-danger" onclick="rejectGroupInvitation(${invitation.group_id})">Từ chối</button>
+              <button class="btn btn-success" onclick="acceptGroupInvitation(${iid})">Chấp nhận</button>
+              <button class="btn btn-danger" onclick="rejectGroupInvitation(${iid})">Từ chối</button>
             </div>
           </li>
         `;
       }).join('');
-  
-  console.log('New HTML:', newInvitationsHtml);
-  
-  // Only update DOM if content actually changed
   if (currentInvitationsHtml !== newInvitationsHtml) {
     elements.groupInvitationsList.innerHTML = newInvitationsHtml;
-    console.log('Updated groupInvitationsList DOM');
   }
 }
 
@@ -548,13 +542,12 @@ async function acceptFriendRequest(requestId) {
   }
 }
 
-async function acceptGroupInvitation(groupId) {
+async function acceptGroupInvitation(inviteId) {
   try {
-    const response = await API.send({ type: 'GROUP_ACCEPT_INVITATION', data: { group_id: groupId } });
-    if (response.type === 'GROUP_ACCEPTED') {
-      groupInvitations = groupInvitations.filter(inv => inv.group_id !== groupId);
+    const response = await API.send({ type: 'GROUP_INVITE_ACCEPT', data: { invite_id: inviteId } });
+    if (response.type === 'GROUP_INVITE_ACCEPTED') {
+      groupInvitations = groupInvitations.filter(inv => inv.invite_id !== inviteId);
       renderGroupInvitations();
-      // Cập nhật ngay lập tức
       API.send({ type: 'GROUP_LIST', data: {} });
       alert('Đã tham gia nhóm thành công!');
     } else if (response.type === 'ERROR') {
@@ -565,11 +558,11 @@ async function acceptGroupInvitation(groupId) {
   }
 }
 
-async function rejectGroupInvitation(groupId) {
+async function rejectGroupInvitation(inviteId) {
   try {
-    const response = await API.send({ type: 'GROUP_REJECT_INVITATION', data: { group_id: groupId } });
-    if (response.type === 'GROUP_REJECTED') {
-      groupInvitations = groupInvitations.filter(inv => inv.group_id !== groupId);
+    const response = await API.send({ type: 'GROUP_INVITE_DECLINE', data: { invite_id: inviteId } });
+    if (response.type === 'GROUP_INVITE_DECLINED') {
+      groupInvitations = groupInvitations.filter(inv => inv.invite_id !== inviteId);
       renderGroupInvitations();
       alert('Đã từ chối lời mời vào nhóm');
     } else if (response.type === 'ERROR') {
